@@ -1,5 +1,6 @@
 ## to run this script=>
-## python github_migration.py -r repo_list.txt -st PAT_SOURCE
+## python github_migration.py -r repo_list.txt -st PAT_SOURCE_CLASSIC 
+# need classic token with repo-scope and admin-access to transfer the repositories to target organization
 
 
 from dotenv import load_dotenv
