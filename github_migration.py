@@ -1,7 +1,9 @@
-# To migrate repositories from one GitHub organization to another (rather than transferring), you typically:
+# It migrates repositories from one GitHub organization to another by:
 
-# Clone the source repository.
-# Push it to a new repository in the target organization.
+# Cloning the source repo (with full history).
+# Creating the target repo (if it doesn’t exist).
+# Pushing the cloned repo to the target org.
+# Cleaning up temporary files.
 # Optionally, migrate issues, PRs, and other metadata using GitHub APIs or third-party tools.
 
 import os
