@@ -1,66 +1,96 @@
-## to run this script=>
-## python github_migration.py -r repo_list.txt -st PAT_SOURCE_CLASSIC 
-# need classic token with repo-scope and admin-access to transfer the repositories to target organization
+# To migrate repositories from one GitHub organization to another (rather than transferring), you typically:
 
+# Clone the source repository.
+# Push it to a new repository in the target organization.
+# Optionally, migrate issues, PRs, and other metadata using GitHub APIs or third-party tools.
 
-from dotenv import load_dotenv
-import requests
 import os
+import subprocess
 import argparse
-from dotenv import load_dotenv 
+from dotenv import load_dotenv
+import shutil
+import stat
+import requests
 
 load_dotenv()
 
-def transfer_repo(source_org, repo_name, target_org, target_repo_name, headers):
-    url = f"https://api.github.com/repos/{source_org}/{repo_name}/transfer"
-    payload = {
-        "new_owner": target_org,
-        "new_name": target_repo_name
+def build_git_url(org_repo, token):
+    return f"https://{token}@github.com/{org_repo}.git"
+
+def on_rm_error(func, path, exc_info):
+    # Remove readonly and try again
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+def ensure_target_repo_exists(target_repo, target_token):
+    org, repo = target_repo.split("/", 1)
+    url = f"https://api.github.com/repos/{org}/{repo}"
+    headers = {
+        "Authorization": f"token {target_token}",
+        "Accept": "application/vnd.github+json"
     }
-    resp = requests.post(url, headers=headers, json=payload)
-    if resp.status_code in (202, 201):
-        print(f"Transfer started: {source_org}/{repo_name} -> {target_org}/{target_repo_name}")
-    else:
-        print(f"Failed to transfer {source_org}/{repo_name}: {resp.status_code} {resp.text}")
+    # Check if repo exists
+    resp = requests.get(url, headers=headers)
+    if resp.status_code == 200:
+        return  # Repo exists
+    # Create repo
+    url = f"https://api.github.com/orgs/{org}/repos"
+    data = {"name": repo, "private": True}
+    resp = requests.post(url, headers=headers, json=data)
+    if resp.status_code not in (201, 202):
+        raise Exception(f"Failed to create target repo {target_repo}: {resp.text}")
+    print(f"Created target repo: {target_repo}")
 
-def process_repo_list(repo_list_file, headers):
-    if not os.path.exists(repo_list_file):
-        print(f"File not found: {repo_list_file}")
-        return
+def migrate_repo(source_org_repo, target_org_repo, source_token, target_token, temp_dir="temp_repo"):
+    source_url = build_git_url(source_org_repo, source_token)
+    target_url = build_git_url(target_org_repo, target_token)
 
-    with open(repo_list_file, 'r') as file:
-        for line in file:
-            line = line.strip()
-            if not line or "::" not in line:
-                print(f"Skipping invalid line: {line}")
-                continue
-            src, tgt = line.split("::")
-            if "/" not in src or "/" not in tgt:
-                print(f"Skipping invalid line: {line}")
-                continue
-            source_org, repo_name = src.split("/", 1)
-            target_org, target_repo_name = tgt.split("/", 1)
-            print(f"Transferring {source_org}/{repo_name} -> {target_org}/{target_repo_name} ...")
-            transfer_repo(source_org, repo_name, target_org, target_repo_name, headers)
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, onerror=on_rm_error)
+
+    print(f"Cloning from {source_org_repo}...")
+    subprocess.run(["git", "clone", "--mirror", source_url, temp_dir], check=True)
+
+    print(f"Pushing to {target_org_repo}...")
+    os.chdir(temp_dir)
+    subprocess.run(["git", "remote", "set-url", "origin", target_url], check=True)
+    subprocess.run(["git", "push", "--mirror"], check=True)
+    os.chdir("..")
+    shutil.rmtree(temp_dir, onerror=on_rm_error)
+    print(f"Migration complete: {source_org_repo} → {target_org_repo}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Transfer repositories as specified in a repo list file.")
-    parser.add_argument('-r', '--repo_list', type=str, required=True, help="Path to the repo list file")
-    # parser.add_argument('-e', '--token_env', type=str, default="GITHUB_TOKEN", help="Environment variable name for GitHub personal access token (default: GITHUB_TOKEN)")  
-    parser.add_argument('-st', '--source_token_env', type=str, required=True, help="Environment variable name for Source GitHub personal access token")
-    
+    parser = argparse.ArgumentParser(description="Migrate GitHub repositories from one org to another using a repo list file.")
+    parser.add_argument("-f", "--file", required=True, help="Path to repo list file (format: org/repo::org/repo per line)")
+    parser.add_argument("-st", "--source_token_env", type=str, default="PAT_SOURCE", help="Env var for source GitHub PAT (default: PAT_SOURCE)")
+    parser.add_argument("-tt", "--target_token_env", type=str, default="PAT_TARGET", help="Env var for target GitHub PAT (default: PAT_TARGET)")
     args = parser.parse_args()
 
     source_token = os.getenv(args.source_token_env)
+    target_token = os.getenv(args.target_token_env)
     if not source_token:
-        raise ValueError(f"Set your GitHub token in the {args.source_token_env} environment variable.")
+        raise ValueError(f"Set your source GitHub token in the {args.source_token_env} environment variable.")
+    if not target_token:
+        raise ValueError(f"Set your target GitHub token in the {args.target_token_env} environment variable.")
 
-    headers = {
-        "Authorization": f"token {source_token}",
-        "Accept": "application/vnd.github+json"
-    }
+    with open(args.file, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or "::" not in line:
+                continue
+            source_repo, target_repo = line.split("::")
+            try:
+                ensure_target_repo_exists(target_repo, target_token)
+                migrate_repo(source_repo, target_repo, source_token, target_token)
+            except subprocess.CalledProcessError as e:
+                print(f"Error migrating {source_repo}: {e}")
+            except Exception as e:
+                print(f"Error ensuring target repo {target_repo}: {e}")
 
-    process_repo_list(args.repo_list, headers)
+    print("Migration and argument parsing completed successfully.")
 
 if __name__ == "__main__":
     main()
+
+# # To run this script => python github_migration.py -f repo_list.txt 
+
