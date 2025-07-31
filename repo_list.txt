@@ -1,0 +1,3 @@
+Source-orgn/repo1::Target-orgn/reponame1
+Source-orgn/repo2::Target-orgn/reponame2
+Source-orgn/repo3::Target-orgn/reponame3

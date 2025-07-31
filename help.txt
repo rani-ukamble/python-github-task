@@ -1,0 +1,9 @@
+python github_argparse.py -r repoLIST.txt -st PAT_SOURCE
+#here -st means --source_token_env
+
+
+
+
+python script.py -r repolist.txt -o ./output -st PAT_SOURCE
+
+
